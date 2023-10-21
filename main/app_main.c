@@ -26,9 +26,13 @@
 static const char *TAG = "MQTT_EXAMPLE";
 
 #define INPUT_PIN 21
+#define INPUT_PIN_2 13
 #define LED_PIN 23
+#define LED_PIN_2 26
 int state = 0;
+int state_2 = 0;
 QueueHandle_t interputQueue;
+esp_mqtt_client_handle_t mqtt_client;
 
 // interrupt service handler
 static void IRAM_ATTR gpio_interrupt_handler(void *args) {
@@ -39,11 +43,31 @@ static void IRAM_ATTR gpio_interrupt_handler(void *args) {
 // LED control task, received button prerssed from ISR
 void LED_Control_Task(void *params) {
 	int pinNumber = 0;
+	char data[3];
 	while (true) {
 		if (xQueueReceive(interputQueue, &pinNumber, portMAX_DELAY)) {
 			gpio_set_level(LED_PIN, gpio_get_level(LED_PIN) == 0);
 			printf("GPIO %d was pressed. The state is %d\n", pinNumber,
 					gpio_get_level(LED_PIN));
+			sprintf(data, "%d", gpio_get_level(LED_PIN)); // <-- แปลงสถานะของ LED  (int) เป็น string
+			esp_mqtt_client_publish(mqtt_client, "/stu_040/lamp1", data, 0, 0,
+					0); // <-- publish ไปยัง broker
+		}
+	}
+}
+
+// LED control task, received button prerssed from ISR
+void LED_Control_Task_2(void *params) {
+	int pinNumber = 0;
+	char data[3];
+	while (true) {
+		if (xQueueReceive(interputQueue, &pinNumber, portMAX_DELAY)) {
+			gpio_set_level(LED_PIN_2, gpio_get_level(LED_PIN_2) == 0);
+			printf("GPIO %d was pressed. The state is %d\n", pinNumber,
+					gpio_get_level(LED_PIN_2));
+			sprintf(data, "%d", gpio_get_level(LED_PIN_2)); // <-- แปลงสถานะของ LED  (int) เป็น string
+			esp_mqtt_client_publish(mqtt_client, "/stu_040/lamp2", data, 0, 0,
+					0); // <-- publish ไปยัง broker
 		}
 	}
 }
@@ -294,6 +318,7 @@ static void mqtt_app_start(void) {
 #endif /* CONFIG_BROKER_URL_FROM_STDIN */
 
 	esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
+	mqtt_client = client;
 	/* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
 	esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler,
 	NULL);
@@ -321,6 +346,9 @@ void app_main(void) {
 	esp_rom_gpio_pad_select_gpio(LED_PIN);
 	gpio_set_direction(LED_PIN, GPIO_MODE_INPUT_OUTPUT);
 
+	esp_rom_gpio_pad_select_gpio(LED_PIN_2);
+	gpio_set_direction(LED_PIN_2, GPIO_MODE_INPUT_OUTPUT);
+
 	// config Input No 21 for external interrupt input
 	esp_rom_gpio_pad_select_gpio(INPUT_PIN);
 	gpio_set_direction(INPUT_PIN, GPIO_MODE_INPUT);
@@ -328,13 +356,22 @@ void app_main(void) {
 	gpio_pullup_dis(INPUT_PIN);
 	gpio_set_intr_type(INPUT_PIN, GPIO_INTR_POSEDGE);
 
+	// config Input No 13 for external interrupt input
+	esp_rom_gpio_pad_select_gpio(INPUT_PIN_2);
+	gpio_set_direction(INPUT_PIN_2, GPIO_MODE_INPUT);
+	gpio_pulldown_en(INPUT_PIN_2);
+	gpio_pullup_dis(INPUT_PIN_2);
+	gpio_set_intr_type(INPUT_PIN_2, GPIO_INTR_POSEDGE);
+
 	// FreeRTOS tas and queue
 	interputQueue = xQueueCreate(10, sizeof(int));
 	xTaskCreate(LED_Control_Task, "LED_Control_Task", 2048, NULL, 1, NULL);
+	xTaskCreate(LED_Control_Task_2, "LED_Control_Task_2", 2048, NULL, 1, NULL);
 
 	// install isr service and isr handler
 	gpio_install_isr_service(0);
 	gpio_isr_handler_add(INPUT_PIN, gpio_interrupt_handler, (void*) INPUT_PIN);
+	gpio_isr_handler_add(INPUT_PIN_2, gpio_interrupt_handler, (void*) INPUT_PIN_2);
 	ESP_LOGI(TAG, "[APP] Startup..");
 	ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
 	ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
